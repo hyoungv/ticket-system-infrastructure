@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: ticket-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:8.15.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5601
+
+          env:
+            # Kibana 8.x에서는 배열 형태가 안전함
+            - name: ELASTICSEARCH_HOSTS
+              value: '["http://elasticsearch.ticket-system.svc.cluster.local:9200"]'
+
+            # 실습 환경용: 보안 기능 비활성화
+            - name: XPACK_SECURITY_ENABLED
+              value: "false"
+
+            # 외부 port-forward 접속 허용
+            - name: SERVER_HOST
+              value: "0.0.0.0"
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 5601
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: ticket-system
+spec:
+  type: ClusterIP
+  selector:
+    app: kibana
+  ports:
+    - name: http
+      port: 5601
+      targetPort: 5601

@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-pvc
+  namespace: ticket-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: ticket-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              chown -R 1000:0 /usr/share/elasticsearch/data
+          volumeMounts:
+            - name: elasticsearch-storage
+              mountPath: /usr/share/elasticsearch/data
+
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9200
+            - name: transport
+              containerPort: 9300
+
+          env:
+            - name: discovery.type
+              value: single-node
+
+            # 실습 환경용: 보안 기능 비활성화
+            - name: xpack.security.enabled
+              value: "false"
+            - name: xpack.security.enrollment.enabled
+              value: "false"
+
+            # VM 메모리 절약용
+            - name: xpack.ml.enabled
+              value: "false"
+            - name: xpack.watcher.enabled
+              value: "false"
+            - name: xpack.monitoring.collection.enabled
+              value: "false"
+
+            # 5GB RAM VM 기준 JVM 메모리 제한
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+
+          resources:
+            requests:
+              memory: "768Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+          volumeMounts:
+            - name: elasticsearch-storage
+              mountPath: /usr/share/elasticsearch/data
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+
+      volumes:
+        - name: elasticsearch-storage
+          persistentVolumeClaim:
+            claimName: elasticsearch-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: ticket-system
+spec:
+  type: ClusterIP
+  selector:
+    app: elasticsearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elasticsearch-init-settings
+  namespace: ticket-system
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-init-settings
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init-settings
+          image: curlimages/curl:8.10.1
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+
+              echo "[1/4] Waiting for Elasticsearch..."
+              until curl -sS http://elasticsearch.ticket-system.svc.cluster.local:9200 >/tmp/es-root.json; do
+                echo "Elasticsearch is not ready yet. Retry in 5 seconds..."
+                sleep 5
+              done
+
+              echo "[2/4] Disable disk allocation threshold for small lab VM"
+              curl -sS -X PUT "http://elasticsearch.ticket-system.svc.cluster.local:9200/_cluster/settings" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "persistent": {
+                    "cluster.routing.allocation.enable": "all",
+                    "cluster.routing.allocation.disk.threshold_enabled": "false"
+                  }
+                }'
+
+              echo
+              echo "[3/4] Set default replica count to 0 for osticket-* indices"
+              curl -sS -X PUT "http://elasticsearch.ticket-system.svc.cluster.local:9200/_index_template/osticket_logs_template" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "index_patterns": ["osticket-*"],
+                  "template": {
+                    "settings": {
+                      "number_of_shards": 1,
+                      "number_of_replicas": 0
+                    }
+                  }
+                }'
+
+              echo
+              echo "[4/4] Retry failed shard allocation"
+              curl -sS -X POST "http://elasticsearch.ticket-system.svc.cluster.local:9200/_cluster/reroute?retry_failed=true"
+
+              echo
+              echo "Elasticsearch init settings completed."

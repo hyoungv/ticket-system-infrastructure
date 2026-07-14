@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: osticket
+  namespace: ticket-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: osticket
+  template:
+    metadata:
+      labels:
+        app: osticket
+    spec:
+      containers:
+      - name: osticket
+        image: campbellsoftwaresolutions/osticket
+        ports:
+        - containerPort: 80
+
+        env:
+        - name: MYSQL_HOST
+          value: mysql
+        - name: MYSQL_USER
+          value: osticket
+        - name: MYSQL_PORT
+          value: "3306"
+        - name: MYSQL_PASSWORD
+          value: secret
+        - name: MYSQL_DATABASE
+          value: osticket
+
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                sleep 5
+
+                mkdir -p /var/log/nginx
+
+                rm -f /var/log/nginx/osticket-access.log /var/log/nginx/osticket-error.log
+                touch /var/log/nginx/osticket-access.log /var/log/nginx/osticket-error.log
+                chmod 666 /var/log/nginx/osticket-access.log /var/log/nginx/osticket-error.log
+
+                nginx -t >/tmp/nginx-test.log 2>&1 || cat /tmp/nginx-test.log
+
+                pgrep nginx >/dev/null || nginx || true
+                nginx -s reopen || true
+
+                nohup tail -n0 -F /var/log/nginx/osticket-access.log >/proc/1/fd/1 2>/proc/1/fd/2 &
+
+        startupProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 6
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3

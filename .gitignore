@@ -1,0 +1,23 @@
+# 환경변수 및 비밀정보
+.env
+*.pem
+*.key
+kubeconfig
+
+# Kubernetes Secret
+Kubernetes/mysql-secret.yaml
+Kubernetes/mysql-secret.yaml.bak
+*-secret.yaml
+*-secret.yaml.bak
+
+# 임시/백업 파일
+*.swp
+*.bak
+*.bak.*
+*.log
+*.tar.gz
+*.zip
+
+# 편집기 설정
+.vscode/
+.idea/
