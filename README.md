@@ -171,4 +171,4 @@ Project1
 - ELK Stack 기반 로그 분석 경험
 - PVC는 Pod 장애에는 강하지만 kind 클러스터 삭제에는 취약
 
-- 프로젝트 발표 자료
+
